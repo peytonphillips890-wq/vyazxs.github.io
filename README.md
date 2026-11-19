@@ -46,7 +46,10 @@ GitHub Pages hosts the static frontend, while the Express API runs on Render. Th
 - CEO password login using an environment-provided bcrypt hash. No default password is installed.
 - Server-side permission checks, custom permission groups, user role assignment/removal, per-user allow/deny/inherit overrides, moderation, input validation, audit records, rate limiting, and SQLite persistence.
 - Authorized CRUD for games, products, announcements, and staff. Shop and announcements start empty. A product's “Get it” action appears only when staff configure a real purchase URL; otherwise it is clearly unavailable.
+- A responsive, charcoal-themed studio control room with overview statistics, activity, searchable management lists, and top-level Custom Pages access for authorized editors.
+- A persistent custom page CMS: draft autosave, publish/private visibility, editable theme and sections (including galleries, cards, FAQs, dynamic studio content, and YouTube/Vimeo videos), preview, duplicate, delete, image uploads, and managed site navigation.
+- Custom pages and navigation are stored in SQLite. Public pages are visible to everyone, private pages to signed-in active members, and unpublished pages to page managers only. Page edits, publishing, uploads, and navigation changes require their respective server-side permissions.
 
-## Deployment scope
+## Persistent uploads and page content
 
-The initial implementation deliberately does not pretend to provide payment processing/order history, image-file uploads, TOTP two-factor authentication, scheduling, arbitrary page builders/navigation reordering, or a full custom badge catalog. Product purchase links can point to an existing checkout provider. Profile and content images use HTTPS URLs. Add these services and workflows before advertising them as available. Configure HTTPS in production; the session cookie is marked secure when `NODE_ENV=production`.
+Custom-page image uploads are limited to PNG, JPEG, and WebP files up to 5 MB. SQLite content, sessions, and uploaded files are stored under `DATA_DIRECTORY` (default `data/`); use a persistent disk and include this directory in backups when deploying. The static GitHub Pages frontend requests custom page content and uploads from the Render API, so keep `FRONTEND_URL` configured to the Pages origin. Product purchase links can point to an existing checkout provider. Configure HTTPS in production; the session cookie is marked secure when `NODE_ENV=production`.

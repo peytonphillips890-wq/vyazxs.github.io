@@ -72,6 +72,37 @@ CREATE TABLE IF NOT EXISTS staff (
   badge TEXT NOT NULL DEFAULT ''
 );
 
+CREATE TABLE IF NOT EXISTS custom_pages (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  slug TEXT NOT NULL COLLATE NOCASE UNIQUE,
+  description TEXT NOT NULL DEFAULT '',
+  banner_url TEXT NOT NULL DEFAULT '',
+  thumbnail_url TEXT NOT NULL DEFAULT '',
+  visibility TEXT NOT NULL DEFAULT 'unpublished' CHECK (visibility IN ('public', 'private', 'unpublished')),
+  sections TEXT NOT NULL DEFAULT '[]',
+  theme TEXT NOT NULL DEFAULT '{}',
+  created_by TEXT NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  published_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS navigation_items (
+  id TEXT PRIMARY KEY,
+  label TEXT NOT NULL,
+  target_type TEXT NOT NULL CHECK (target_type IN ('builtin', 'custom', 'external')),
+  target TEXT NOT NULL,
+  visible INTEGER NOT NULL DEFAULT 1 CHECK (visible IN (0, 1)),
+  audience TEXT NOT NULL DEFAULT 'public' CHECK (audience IN ('public', 'signed_in', 'permission')),
+  required_permission TEXT NOT NULL DEFAULT '',
+  new_tab INTEGER NOT NULL DEFAULT 0 CHECK (new_tab IN (0, 1)),
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS custom_pages_visibility_order ON custom_pages (visibility, updated_at);
+CREATE INDEX IF NOT EXISTS navigation_items_order ON navigation_items (sort_order);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL

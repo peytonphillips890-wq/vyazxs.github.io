@@ -7,13 +7,16 @@ const { DatabaseSync } = require('node:sqlite');
 const bcrypt = require('bcryptjs');
 const helmet = require('helmet');
 const { rateLimit } = require('express-rate-limit');
+const multer = require('multer');
 const { z } = require('zod');
 
 require('dotenv').config();
 
 const root = path.join(__dirname, '..');
 const dataDirectory = process.env.DATA_DIRECTORY || path.join(root, 'data');
+const uploadsDirectory = path.join(dataDirectory, 'uploads');
 fs.mkdirSync(dataDirectory, { recursive: true });
+fs.mkdirSync(uploadsDirectory, { recursive: true });
 
 const required = ['SESSION_SECRET', 'CEO_USERNAME', 'CEO_PASSWORD_HASH'];
 for (const name of required) {
@@ -72,6 +75,19 @@ const permissions = [
   'manage_users', 'ban_users', 'unban_users', 'assign_badges',
   'manage_discord', 'manage_pages', 'manage_navigation', 'manage_permissions'
 ];
+const builtinNavigation = [
+  ['home', 'Home'],
+  ['games', 'Games'],
+  ['shop', 'Shop'],
+  ['announcements', 'News'],
+  ['staff', 'Studio'],
+  ['discord', 'Community']
+];
+const customSectionTypes = [
+  'hero', 'about', 'games', 'gallery', 'team', 'news', 'shop',
+  'discord', 'text', 'features', 'video', 'cta', 'faq'
+];
+const pageFonts = ['Space Grotesk', 'DM Sans', 'Arial'];
 const collections = {
   games: { permission: 'manage_games', table: 'games', fields: ['title', 'description', 'image_url', 'play_url', 'status', 'featured'], required: ['title', 'description'] },
   products: { permission: 'manage_shop', table: 'products', fields: ['title', 'description', 'image_url', 'category', 'price', 'purchase_url', 'featured'], required: ['title', 'description'] },
@@ -94,15 +110,20 @@ function seed() {
   };
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(defaults)) insert.run(key, value);
+  const insertNavigation = db.prepare(`INSERT OR IGNORE INTO navigation_items
+    (id, label, target_type, target, visible, sort_order) VALUES (?, ?, 'builtin', ?, 1, ?)`);
+  builtinNavigation.forEach(([id, label], index) => insertNavigation.run(id, label, id, index));
 }
 seed();
 
 app.set('trust proxy', 1);
 app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
       imgSrc: ["'self'", 'https:', 'data:'],
+      frameSrc: ["'self'", 'https://www.youtube-nocookie.com', 'https://player.vimeo.com'],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
       scriptSrc: ["'self'"],
@@ -146,6 +167,7 @@ app.use(session({
     maxAge: 7 * 24 * 60 * 60 * 1000
   }
 }));
+app.use('/uploads', express.static(uploadsDirectory, { fallthrough: false, maxAge: '1d', immutable: true }));
 app.use(express.static(path.join(root, 'public')));
 app.use('/api/admin', rateLimit({ windowMs: 15 * 60 * 1000, limit: 180, standardHeaders: true, legacyHeaders: false }));
 
@@ -211,6 +233,115 @@ function requireAnyPermission(...requested) {
 
 function validHttpUrl(value) {
   try { return ['http:', 'https:'].includes(new URL(value).protocol); } catch { return false; }
+}
+
+function validAssetUrl(value) {
+  return value === '' || validHttpUrl(value) || /^\/uploads\/[a-f0-9-]+\.(?:png|jpe?g|webp)$/i.test(value);
+}
+
+function validPageLink(value) {
+  return value === '' || validHttpUrl(value)
+    || /^\/(?!\/)[a-zA-Z0-9/_-]*(?:\?[a-zA-Z0-9_=&%-]*)?$/.test(value)
+    || /^#(?:[a-z0-9-]+|custom\/[a-z0-9-]+)$/i.test(value);
+}
+
+function validVideoUrl(value) {
+  if (value === '') return true;
+  try {
+    const url = new URL(value);
+    if (!['https:', 'http:'].includes(url.protocol)) return false;
+    if (['youtu.be', 'www.youtu.be'].includes(url.hostname)) return /^[\w-]{11}$/.test(url.pathname.slice(1));
+    if (['youtube.com', 'www.youtube.com', 'm.youtube.com', 'youtube-nocookie.com', 'www.youtube-nocookie.com'].includes(url.hostname)) {
+      return url.pathname === '/watch' ? /^[\w-]{11}$/.test(url.searchParams.get('v') || '')
+        : /^\/embed\/[\w-]{11}$/.test(url.pathname);
+    }
+    return ['vimeo.com', 'www.vimeo.com'].includes(url.hostname) && /^\d{1,20}$/.test(url.pathname.slice(1));
+  } catch { return false; }
+}
+
+const pageSectionItemSchema = z.object({
+  title: z.string().trim().max(120).default(''),
+  text: z.string().trim().max(1200).default(''),
+  imageUrl: z.string().trim().max(500).refine(validAssetUrl).default(''),
+  linkLabel: z.string().trim().max(60).default(''),
+  linkUrl: z.string().trim().max(500).refine(validPageLink).default('')
+}).strict();
+const pageSectionSchema = z.object({
+  id: z.string().uuid(),
+  type: z.enum(customSectionTypes),
+  title: z.string().trim().max(120).default(''),
+  text: z.string().trim().max(4000).default(''),
+  imageUrl: z.string().trim().max(500).refine(validAssetUrl).default(''),
+  videoUrl: z.string().trim().max(500).refine(validVideoUrl).default(''),
+  linkLabel: z.string().trim().max(60).default(''),
+  linkUrl: z.string().trim().max(500).refine(validPageLink).default(''),
+  items: z.array(pageSectionItemSchema).max(12).default([])
+}).strict();
+const pageThemeSchema = z.object({
+  backgroundColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#080808'),
+  textColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#f4f4f4'),
+  accentColor: z.string().regex(/^#[0-9a-fA-F]{6}$/).default('#c8c8c8'),
+  fontFamily: z.enum(pageFonts).default('DM Sans'),
+  sectionSpacing: z.number().int().min(24).max(120).default(72)
+}).strict();
+const customPageSchema = z.object({
+  title: z.string().trim().min(1).max(100),
+  slug: z.string().trim().min(2).max(64).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/),
+  description: z.string().trim().max(300).default(''),
+  bannerUrl: z.string().trim().max(500).refine(validAssetUrl).default(''),
+  thumbnailUrl: z.string().trim().max(500).refine(validAssetUrl).default(''),
+  visibility: z.enum(['public', 'private', 'unpublished']).default('unpublished'),
+  sections: z.array(pageSectionSchema).max(40).default([]),
+  theme: pageThemeSchema.default({
+    backgroundColor: '#080808',
+    textColor: '#f4f4f4',
+    accentColor: '#c8c8c8',
+    fontFamily: 'DM Sans',
+    sectionSpacing: 72
+  }),
+}).strict();
+
+function serializeCustomPage(page) {
+  return {
+    id: page.id,
+    title: page.title,
+    slug: page.slug,
+    description: page.description,
+    bannerUrl: page.banner_url,
+    thumbnailUrl: page.thumbnail_url,
+    visibility: page.visibility,
+    sections: JSON.parse(page.sections),
+    theme: JSON.parse(page.theme),
+    createdAt: page.created_at,
+    updatedAt: page.updated_at,
+    publishedAt: page.published_at
+  };
+}
+
+function visibleNavigation(user) {
+  const rows = db.prepare(`SELECT n.*, p.slug, p.visibility AS page_visibility
+    FROM navigation_items n
+    LEFT JOIN custom_pages p ON n.target_type = 'custom' AND p.id = n.target
+    ORDER BY n.sort_order, n.label`).all();
+  return rows.filter(item => {
+    if (!item.visible) return false;
+    if (item.audience === 'signed_in' && (!user || user.status !== 'active')) return false;
+    if (item.audience === 'permission'
+        && (!user || user.status !== 'active' || !hasPermission(user, item.required_permission))) return false;
+    if (item.target_type === 'custom') {
+      if (!item.slug || item.page_visibility === 'unpublished') return false;
+      if (item.page_visibility === 'private' && (!user || user.status !== 'active')) return false;
+    }
+    return true;
+  }).map(item => ({
+    id: item.id,
+    label: item.label,
+    targetType: item.target_type,
+    target: item.target_type === 'custom' ? item.slug : item.target,
+    newTab: Boolean(item.new_tab),
+    href: item.target_type === 'builtin' ? `#${item.target}`
+      : item.target_type === 'custom' ? `#custom/${item.slug}` : item.target
+  }));
 }
 
 function audit(user, action, target = '') {
@@ -375,9 +506,225 @@ app.get('/api/bootstrap', (req, res) => {
     staff,
     site: JSON.parse(setting('site') || '{}'),
     roleOptions: JSON.parse(setting('roleOptions') || '[]'),
+    permissionOptions: permissions,
+    navigation: visibleNavigation(user),
     welcomeDm: req.session.welcomeDm || null
   });
   delete req.session.welcomeDm;
+});
+
+app.get('/api/pages/:slug', (req, res) => {
+  const page = db.prepare('SELECT * FROM custom_pages WHERE slug = ? COLLATE NOCASE').get(req.params.slug);
+  const user = currentUser(req);
+  if (!page
+      || (page.visibility === 'private' && (!user || user.status !== 'active'))
+      || (page.visibility === 'unpublished'
+        && (!user || user.status !== 'active' || !hasPermission(user, 'manage_pages')))) {
+    return res.status(404).json({ error: 'Page not found.' });
+  }
+  res.json({ page: serializeCustomPage(page) });
+});
+
+app.get('/api/admin/dashboard', requireUser, requireAnyPermission(
+  'manage_games', 'manage_shop', 'manage_announcements', 'manage_staff',
+  'manage_users', 'manage_permissions', 'manage_pages', 'manage_navigation', 'manage_discord'
+), (req, res) => {
+  const count = table => db.prepare(`SELECT COUNT(*) AS count FROM ${table}`).get().count;
+  const recentActivity = db.prepare(`SELECT a.id, a.action, a.target_id, a.created_at, u.username AS actor
+    FROM audit_logs a LEFT JOIN users u ON u.id = a.actor_id
+    ORDER BY a.created_at DESC LIMIT 10`).all();
+  res.json({
+    stats: {
+      users: count('users'),
+      games: count('games'),
+      products: count('products'),
+      announcements: count('announcements'),
+      pages: count('custom_pages'),
+      publishedPages: db.prepare("SELECT COUNT(*) AS count FROM custom_pages WHERE visibility = 'public'").get().count
+    },
+    recentActivity
+  });
+});
+
+app.get('/api/admin/pages', requireUser, requirePermission('manage_pages'), (req, res) => {
+  const pages = db.prepare('SELECT * FROM custom_pages ORDER BY updated_at DESC, title COLLATE NOCASE').all();
+  res.json(pages.map(serializeCustomPage));
+});
+
+app.post('/api/admin/pages', requireUser, requirePermission('manage_pages'), (req, res) => {
+  const parsed = customPageSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Page details are invalid.' });
+  const page = parsed.data;
+  const id = crypto.randomUUID();
+  try {
+    db.prepare(`INSERT INTO custom_pages
+      (id, title, slug, description, banner_url, thumbnail_url, visibility, sections, theme, created_by, published_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'unpublished' THEN NULL ELSE datetime('now') END)`)
+      .run(id, page.title, page.slug, page.description, page.bannerUrl, page.thumbnailUrl,
+        page.visibility, JSON.stringify(page.sections), JSON.stringify(page.theme), req.user.id, page.visibility);
+    audit(req.user, 'page.created', id);
+    res.status(201).json({ page: serializeCustomPage(db.prepare('SELECT * FROM custom_pages WHERE id = ?').get(id)) });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'That page URL is already in use.' });
+    throw error;
+  }
+});
+
+app.put('/api/admin/pages/:id', requireUser, requirePermission('manage_pages'), (req, res) => {
+  const parsed = customPageSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Page details are invalid.' });
+  const existing = db.prepare('SELECT * FROM custom_pages WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Page not found.' });
+  const page = parsed.data;
+  try {
+    db.prepare(`UPDATE custom_pages SET title = ?, slug = ?, description = ?, banner_url = ?, thumbnail_url = ?,
+      visibility = ?, sections = ?, theme = ?, updated_at = datetime('now'),
+      published_at = CASE WHEN ? = 'unpublished' THEN NULL
+        WHEN published_at IS NULL THEN datetime('now') ELSE published_at END
+      WHERE id = ?`)
+      .run(page.title, page.slug, page.description, page.bannerUrl, page.thumbnailUrl,
+        page.visibility, JSON.stringify(page.sections), JSON.stringify(page.theme), page.visibility, req.params.id);
+    audit(req.user, page.visibility === 'unpublished' ? 'page.updated' : 'page.published', req.params.id);
+    res.json({ page: serializeCustomPage(db.prepare('SELECT * FROM custom_pages WHERE id = ?').get(req.params.id)) });
+  } catch (error) {
+    if (error.code === 'SQLITE_CONSTRAINT_UNIQUE') return res.status(409).json({ error: 'That page URL is already in use.' });
+    throw error;
+  }
+});
+
+app.post('/api/admin/pages/:id/duplicate', requireUser, requirePermission('manage_pages'), (req, res) => {
+  const original = db.prepare('SELECT * FROM custom_pages WHERE id = ?').get(req.params.id);
+  if (!original) return res.status(404).json({ error: 'Page not found.' });
+  const id = crypto.randomUUID();
+  const baseSlug = original.slug.slice(0, 58).replace(/-+$/, '');
+  let suffix = 1;
+  let slug;
+  do {
+    const end = suffix === 1 ? '-copy' : `-copy-${suffix}`;
+    slug = `${baseSlug.slice(0, 64 - end.length)}${end}`;
+    suffix += 1;
+  } while (db.prepare('SELECT 1 FROM custom_pages WHERE slug = ? COLLATE NOCASE').get(slug));
+  db.prepare(`INSERT INTO custom_pages
+    (id, title, slug, description, banner_url, thumbnail_url, visibility, sections, theme, created_by)
+    VALUES (?, ?, ?, ?, ?, ?, 'unpublished', ?, ?, ?)`)
+    .run(id, `Copy of ${original.title}`.slice(0, 100), slug, original.description, original.banner_url,
+      original.thumbnail_url, original.sections, original.theme, req.user.id);
+  audit(req.user, 'page.duplicated', id);
+  res.status(201).json({ page: serializeCustomPage(db.prepare('SELECT * FROM custom_pages WHERE id = ?').get(id)) });
+});
+
+app.delete('/api/admin/pages/:id', requireUser, requirePermission('manage_pages'), (req, res) => {
+  const page = db.prepare('SELECT id FROM custom_pages WHERE id = ?').get(req.params.id);
+  if (!page) return res.status(404).json({ error: 'Page not found.' });
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.prepare("DELETE FROM navigation_items WHERE target_type = 'custom' AND target = ?").run(page.id);
+    db.prepare('DELETE FROM custom_pages WHERE id = ?').run(page.id);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  audit(req.user, 'page.deleted', page.id);
+  res.json({ ok: true });
+});
+
+const imageTypes = new Map([
+  ['image/png', { extension: '.png', signature: buffer => buffer.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])) }],
+  ['image/jpeg', { extension: '.jpg', signature: buffer => buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff }],
+  ['image/webp', { extension: '.webp', signature: buffer => buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP' }]
+]);
+const imageUpload = multer({
+  storage: multer.diskStorage({
+    destination: uploadsDirectory,
+    filename: (req, file, callback) => callback(null, `${crypto.randomUUID()}${imageTypes.get(file.mimetype)?.extension || ''}`)
+  }),
+  limits: { fileSize: 5 * 1024 * 1024, files: 1 },
+  fileFilter: (req, file, callback) => callback(
+    imageTypes.has(file.mimetype) ? null : new Error('Upload a PNG, JPEG, or WebP image.'),
+    imageTypes.has(file.mimetype)
+  )
+});
+
+app.post('/api/admin/uploads', requireUser, requirePermission('manage_pages'), imageUpload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Choose an image to upload.' });
+  const data = fs.readFileSync(req.file.path);
+  if (!imageTypes.get(req.file.mimetype).signature(data)) {
+    fs.unlinkSync(req.file.path);
+    return res.status(400).json({ error: 'The uploaded file is not a valid PNG, JPEG, or WebP image.' });
+  }
+  audit(req.user, 'page.image.uploaded', req.file.filename);
+  res.status(201).json({ url: `/uploads/${req.file.filename}` });
+});
+
+app.get('/api/admin/navigation', requireUser, requirePermission('manage_navigation'), (req, res) => {
+  const items = db.prepare('SELECT * FROM navigation_items ORDER BY sort_order, label').all().map(item => ({
+    id: item.id,
+    label: item.label,
+    targetType: item.target_type,
+    target: item.target,
+    visible: Boolean(item.visible),
+    audience: item.audience,
+    requiredPermission: item.required_permission,
+    newTab: Boolean(item.new_tab),
+    sortOrder: item.sort_order
+  }));
+  const pages = db.prepare('SELECT id, title, slug, visibility FROM custom_pages ORDER BY title COLLATE NOCASE').all();
+  res.json({ items, pages });
+});
+
+const navigationItemSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,64}$/),
+  label: z.string().trim().min(1).max(64),
+  targetType: z.enum(['builtin', 'custom', 'external']),
+  target: z.string().trim().min(1).max(500),
+  visible: z.boolean(),
+  audience: z.enum(['public', 'signed_in', 'permission']),
+  requiredPermission: z.union([z.enum(permissions), z.literal('')]).default(''),
+  newTab: z.boolean(),
+  sortOrder: z.number().int().min(0).max(10000)
+}).strict();
+
+app.put('/api/admin/navigation', requireUser, requirePermission('manage_navigation'), (req, res) => {
+  const parsed = z.array(navigationItemSchema).max(50).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Navigation items are invalid.' });
+  const items = parsed.data;
+  const ids = new Set(items.map(item => item.id));
+  if (ids.size !== items.length || builtinNavigation.some(([id]) => !ids.has(id))) {
+    return res.status(400).json({ error: 'Keep every built-in navigation item and use unique item IDs.' });
+  }
+  for (const item of items) {
+    if (item.audience === 'permission' && !item.requiredPermission) {
+      return res.status(400).json({ error: 'Choose a permission for restricted navigation items.' });
+    }
+    if (item.targetType === 'builtin'
+        && !builtinNavigation.some(([id]) => id === item.id && id === item.target)) {
+      return res.status(400).json({ error: 'Built-in navigation destinations cannot be changed.' });
+    }
+    if (item.targetType === 'custom' && !db.prepare('SELECT 1 FROM custom_pages WHERE id = ?').get(item.target)) {
+      return res.status(400).json({ error: 'Choose an existing custom page.' });
+    }
+    if (item.targetType === 'external' && !validHttpUrl(item.target)) {
+      return res.status(400).json({ error: 'External navigation links must use HTTP or HTTPS.' });
+    }
+  }
+  const save = db.prepare(`INSERT INTO navigation_items
+    (id, label, target_type, target, visible, audience, required_permission, new_tab, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    db.exec('DELETE FROM navigation_items');
+    for (const item of items) {
+      save.run(item.id, item.label, item.targetType, item.target, item.visible ? 1 : 0,
+        item.audience, item.requiredPermission, item.newTab ? 1 : 0, item.sortOrder);
+    }
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+  audit(req.user, 'navigation.updated');
+  res.json({ ok: true });
 });
 
 app.get('/api/profile/:id', (req, res) => {
@@ -605,6 +952,13 @@ for (const [name, config] of Object.entries(collections)) {
 }
 
 app.use('/api', (error, req, res, next) => {
+  if (error instanceof multer.MulterError) {
+    const status = error.code === 'LIMIT_FILE_SIZE' ? 413 : 400;
+    return res.status(status).json({ error: status === 413 ? 'Images must be 5 MB or smaller.' : 'The image upload could not be processed.' });
+  }
+  if (error.message === 'Upload a PNG, JPEG, or WebP image.') {
+    return res.status(400).json({ error: error.message });
+  }
   console.error('API error:', error);
   if (res.headersSent) return next(error);
   res.status(500).json({ error: 'An unexpected server error occurred.' });
