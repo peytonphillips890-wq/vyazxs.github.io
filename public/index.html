@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b09">
+  <meta name="description" content="Crazy Studios — an independent game studio building worlds worth getting lost in.">
+  <title>Crazy Studios — Play beyond ordinary</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="page-noise"></div>
+  <header class="topbar">
+    <a class="brand" href="#home" aria-label="Crazy Studios home">
+      <img src="https://imglink.cc/cdn/w_9tyzCBOe.png" alt="Crazy Studios logo">
+      <span>CRAZY<span class="brand-light">STUDIOS</span></span>
+    </a>
+    <nav id="main-nav" class="main-nav" aria-label="Main navigation">
+      <button class="nav-link active" data-page="home">Home</button>
+      <button class="nav-link" data-page="games">Games</button>
+      <button class="nav-link" data-page="shop">Shop</button>
+      <button class="nav-link" data-page="announcements">News</button>
+      <button class="nav-link" data-page="staff">Studio</button>
+      <button class="nav-link" data-page="discord">Community</button>
+    </nav>
+    <div class="header-actions">
+      <button id="signin-button" class="button button-outline button-small">Sign in <span aria-hidden="true">↗</span></button>
+      <button id="account-button" class="account-button hidden" aria-label="Open account">
+        <img id="account-avatar" alt="">
+      </button>
+      <button id="menu-button" class="menu-button" aria-label="Open navigation"><span></span><span></span></button>
+    </div>
+  </header>
+
+  <main>
+    <section class="page active" id="page-home">
+      <div class="hero">
+        <div class="hero-orbit orbit-one"></div><div class="hero-orbit orbit-two"></div>
+        <div class="hero-content">
+          <div class="eyebrow"><span class="live-dot"></span> INDEPENDENT GAME STUDIO <span class="eyebrow-line"></span> EST. 2024</div>
+          <h1>We make worlds<br>worth <span class="accent-text">getting lost in.</span></h1>
+          <p class="hero-copy">Small team. Wild ideas. Games that stay with you long after you log off.</p>
+          <div class="hero-actions">
+            <button class="button button-primary" data-go="games">Explore our games <span>↗</span></button>
+            <button class="button button-quiet" data-go="discord"><span class="play-icon">◈</span> Meet the community</button>
+          </div>
+          <div class="hero-meta"><span><i class="meta-dot"></i> CREATIVITY WITHOUT LIMITS</span><span>SCROLL TO EXPLORE <b>↓</b></span></div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="art-grid"></div>
+          <div class="art-ring ring-a"></div><div class="art-ring ring-b"></div>
+          <div class="art-card"><img src="https://imglink.cc/cdn/w_9tyzCBOe.png" alt=""><span>PLAY DIFFERENT.</span></div>
+          <div class="art-coordinate">40°42'51.1"N<br>74°00'21.2"W</div>
+          <div class="art-index">CS—001<br><span>THE NEXT LEVEL</span></div>
+        </div>
+        <div class="hero-bottom-line"></div>
+      </div>
+      <div class="ticker" aria-label="Crazy Studios">
+        <div class="ticker-track"><span>MAKE SOMETHING CRAZY</span><b>✳</b><span>PLAY BEYOND ORDINARY</span><b>✳</b><span>BUILT FOR THE CURIOUS</span><b>✳</b><span>MAKE SOMETHING CRAZY</span><b>✳</b></div>
+      </div>
+      <section class="section section-featured">
+        <div class="section-heading"><div><div class="eyebrow">01 — THE PLAYGROUND</div><h2>Worlds in the making<span class="accent-text">.</span></h2></div><button class="text-link" data-go="games">All games <span>↗</span></button></div>
+        <div id="home-games" class="game-grid"></div>
+      </section>
+      <section class="statement">
+        <div class="statement-mark">CS<span>✳</span></div>
+        <div><div class="eyebrow">A LITTLE ABOUT US</div><h2>Built on big ideas.<br><span class="muted-text">Powered by play.</span></h2></div>
+        <p>Crazy Studios is an independent team chasing the feeling of discovering something new. We build playful, unexpected experiences for the people who never stopped exploring.</p>
+      </section>
+      <section class="section home-news">
+        <div class="section-heading"><div><div class="eyebrow">02 — FROM THE STUDIO</div><h2>Fresh off the press<span class="accent-text">.</span></h2></div><button class="text-link" data-go="announcements">All updates <span>↗</span></button></div>
+        <div id="home-news" class="news-grid"></div>
+      </section>
+      <section class="cta-band"><div class="cta-spark">✳</div><div class="eyebrow">THE FUN IS BETTER TOGETHER</div><h2>Come be part of<br><span class="accent-text">the crazy.</span></h2><button class="button button-primary" data-go="discord">Find your people <span>↗</span></button></section>
+    </section>
+
+    <section class="page interior-page" id="page-games">
+      <div class="page-heading"><div class="eyebrow">THE PLAYGROUND — 01</div><h1>Pick your next<br><span class="accent-text">adventure.</span></h1><p>Every world starts with a what if. Here's what we're dreaming up.</p></div>
+      <div class="filter-row"><label class="search-box"><span>⌕</span><input id="game-search" type="search" placeholder="Find your next world..." autocomplete="off"></label><div id="game-filters" class="filter-chips"></div></div>
+      <div id="games-grid" class="game-grid"></div>
+    </section>
+    <section class="page interior-page" id="page-shop">
+      <div class="page-heading"><div class="eyebrow">THE DROP — 02</div><h1>Good stuff.<br><span class="accent-text">No nonsense.</span></h1><p>Digital goods and studio favorites. Only the good kind of extra.</p></div>
+      <div id="shop-grid" class="product-grid"></div>
+    </section>
+    <section class="page interior-page" id="page-announcements">
+      <div class="page-heading"><div class="eyebrow">TRANSMISSIONS — 03</div><h1>Signals from<br><span class="accent-text">the studio.</span></h1><p>News, notes, and little things we're excited to share.</p></div>
+      <div id="announcements-grid" class="announcement-grid"></div>
+    </section>
+    <section class="page interior-page" id="page-staff">
+      <div class="page-heading"><div class="eyebrow">THE PEOPLE — 04</div><h1>Meet the<br><span class="accent-text">makers.</span></h1><p>Good games come from good people. These are some of ours.</p></div>
+      <div id="staff-grid" class="staff-grid"></div>
+    </section>
+    <section class="page interior-page" id="page-discord">
+      <div class="community-card"><div class="community-glow"></div><div class="eyebrow"><span class="live-dot"></span> THE CRAZY STUDIOS COMMUNITY</div><h1>There's room<br>for <span class="accent-text">one more.</span></h1><p id="discord-description">Join the conversation and meet the community.</p><a id="discord-link" class="button button-primary" href="#" target="_blank" rel="noreferrer">Join our Discord <span>↗</span></a><p class="community-caption">GOOD PEOPLE. SHARED WORLDS. ZERO GATEKEEPING.</p></div>
+    </section>
+  </main>
+
+  <footer class="footer"><div class="footer-top"><a class="brand" href="#home"><img src="https://imglink.cc/cdn/w_9tyzCBOe.png" alt=""><span>CRAZY<span class="brand-light">STUDIOS</span></span></a><span>AN INDEPENDENT GAME STUDIO</span><button class="text-link" data-go="discord">Come say hi <span>↗</span></button></div><div class="footer-bottom"><span>© <span id="year"></span> CRAZY STUDIOS. MADE WITH CURIOSITY.</span><span>MAKE SOMETHING CRAZY <b>✳</b></span></div></footer>
+
+  <div id="modal-backdrop" class="modal-backdrop hidden">
+    <section id="modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"></section>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
