@@ -30,6 +30,8 @@ db.exec(`CREATE TABLE IF NOT EXISTS sessions (
   expires INTEGER NOT NULL
 )`);
 const app = express();
+const configuredFrontendUrl = process.env.FRONTEND_URL;
+const configuredFrontendOrigin = configuredFrontendUrl ? new URL(configuredFrontendUrl).origin : null;
 class SQLiteSessionStore extends session.Store {
   get(sid, callback) {
     try {
@@ -111,24 +113,39 @@ app.use(helmet({
   }
 }));
 app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  if (!origin) return req.method === 'OPTIONS' ? res.sendStatus(204) : next();
+  let requestOrigin;
+  try { requestOrigin = `${req.protocol}://${req.get('host')}`; }
+  catch { return res.status(403).json({ error: 'Request origin is not allowed.' }); }
+  let parsedOrigin;
+  try { parsedOrigin = new URL(origin).origin; }
+  catch { return res.status(403).json({ error: 'Request origin is not allowed.' }); }
+  if (parsedOrigin !== requestOrigin && parsedOrigin !== configuredFrontendOrigin) {
+    return res.status(403).json({ error: 'Request origin is not allowed.' });
+  }
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Vary', 'Origin');
+  if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
 app.use(session({
   store: new SQLiteSessionStore(),
   name: 'crazy.sid',
   secret: process.env.SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
-  cookie: { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', maxAge: 7 * 24 * 60 * 60 * 1000 }
-}));
-app.use((req, res, next) => {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return next();
-  const origin = req.get('origin');
-  if (origin) {
-    try {
-      if (new URL(origin).host !== req.get('host')) return res.status(403).json({ error: 'Request origin is not allowed.' });
-    } catch { return res.status(403).json({ error: 'Request origin is not allowed.' }); }
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+    maxAge: 7 * 24 * 60 * 60 * 1000
   }
-  next();
-});
+}));
 app.use(express.static(path.join(root, 'public')));
 app.use('/api/admin', rateLimit({ windowMs: 15 * 60 * 1000, limit: 180, standardHeaders: true, legacyHeaders: false }));
 
@@ -333,7 +350,7 @@ app.get('/auth/discord/callback', authLimiter, async (req, res) => {
       console.error('Welcome DM delivery failed:', error.message);
       req.session.welcomeDm = 'failed';
     }
-    res.redirect('/');
+    res.redirect(configuredFrontendUrl || '/');
   } catch (error) {
     console.error('Discord sign-in failed:', error.message);
     res.status(502).send('Discord sign-in failed. Please try again later.');

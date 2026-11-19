@@ -30,6 +30,7 @@ before(async () => {
       PORT: String(port),
       DATA_DIRECTORY: dataDirectory,
       SESSION_SECRET: 'test-session-secret-with-more-than-32-characters',
+      FRONTEND_URL: 'https://peytonphillips890-wq.github.io/vyazxs.github.io/',
       CEO_USERNAME: 'Vyazxs',
       CEO_PASSWORD_HASH: hash
     },
@@ -65,13 +66,40 @@ test('shop and announcements start empty, and protected routes reject guests', a
   assert.equal(adminResponse.status, 401);
 });
 
+test('GitHub Pages origin can make credentialed API requests but other origins are rejected', async () => {
+  const origin = 'https://peytonphillips890-wq.github.io';
+  const preflight = await fetch(`${baseUrl}/api/admin/games`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: origin,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type'
+    }
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), origin);
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
+
+  const bootstrap = await fetch(`${baseUrl}/api/bootstrap`, { headers: { Origin: origin } });
+  assert.equal(bootstrap.status, 200);
+  assert.equal(bootstrap.headers.get('access-control-allow-origin'), origin);
+
+  const rejected = await fetch(`${baseUrl}/api/bootstrap`, { headers: { Origin: 'https://attacker.example' } });
+  assert.equal(rejected.status, 403);
+});
+
 test('CEO login creates a session and allows authorized game management', async () => {
   const login = await fetch(`${baseUrl}/api/auth/ceo`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      Origin: 'https://peytonphillips890-wq.github.io',
+      'Content-Type': 'application/json'
+    },
     body: JSON.stringify({ username: 'Vyazxs', password: 'test-password-only' })
   });
   assert.equal(login.status, 200);
+  assert.equal(login.headers.get('access-control-allow-origin'), 'https://peytonphillips890-wq.github.io');
+  assert.equal(login.headers.get('access-control-allow-credentials'), 'true');
   cookie = login.headers.get('set-cookie').split(';')[0];
 
   const created = await fetch(`${baseUrl}/api/admin/games`, {
@@ -83,6 +111,39 @@ test('CEO login creates a session and allows authorized game management', async 
   const { games } = await (await fetch(`${baseUrl}/api/bootstrap`, { headers: { Cookie: cookie } })).json();
   assert.equal(games.length, 1);
   assert.equal(games[0].title, 'Test world');
+});
+
+test('CEO can create, edit, and delete games, shop products, and news posts', async () => {
+  for (const [collection, createPayload, editedTitle] of [
+    ['games', { title: 'Moon world', description: 'First adventure', status: 'In development', play_url: 'https://www.roblox.com/games/2' }, 'Updated world'],
+    ['products', { title: 'Studio hoodie', description: 'First edition', category: 'Apparel', price: '$20' }, 'Updated hoodie'],
+    ['announcements', { title: 'Studio update', body: 'We have news.', author: 'Crazy Studios' }, 'Updated update']
+  ]) {
+    const created = await fetch(`${baseUrl}/api/admin/${collection}`, {
+      method: 'POST',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify(createPayload)
+    });
+    assert.equal(created.status, 201);
+    const { id } = await created.json();
+
+    const updated = await fetch(`${baseUrl}/api/admin/${collection}/${id}`, {
+      method: 'PUT',
+      headers: { Cookie: cookie, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title: editedTitle })
+    });
+    assert.equal(updated.status, 200);
+    const bootstrap = await (await fetch(`${baseUrl}/api/bootstrap`, { headers: { Cookie: cookie } })).json();
+    assert.equal(bootstrap[collection].find(item => item.id === id).title, editedTitle);
+
+    const deleted = await fetch(`${baseUrl}/api/admin/${collection}/${id}`, {
+      method: 'DELETE',
+      headers: { Cookie: cookie }
+    });
+    assert.equal(deleted.status, 200);
+    const afterDelete = await (await fetch(`${baseUrl}/api/bootstrap`, { headers: { Cookie: cookie } })).json();
+    assert.equal(afterDelete[collection].some(item => item.id === id), false);
+  }
 });
 
 test('content validation rejects unsafe outbound URLs', async () => {

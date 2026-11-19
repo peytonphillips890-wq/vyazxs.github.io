@@ -37,7 +37,7 @@ The site is available at `http://localhost:3000`. SQLite data and sessions are c
 
 Deploy this repository as a Node 22.5+ web service on a host that supports persistent storage. Configure the environment variables from `.env.example`, set `NODE_ENV=production`, and use the exact public URL for `BASE_URL` and `DISCORD_REDIRECT_URI`. Provide a persistent disk for the `data/` directory: SQLite sessions and application data are not suitable for an ephemeral filesystem.
 
-GitHub Pages can host only the static frontend; it cannot run this backend, OAuth callback, SQLite database, or Discord bot requests. The included Pages workflow publishes `public/` as a static preview, where account sign-in and backend management are intentionally unavailable. Deploy the app as a single Node service (which also serves `public/`) or host the frontend separately and configure a same-origin API/reverse proxy. Do not place server secrets in GitHub Pages settings that are exposed to client code.
+GitHub Pages hosts the static frontend, while the Express API runs on Render. The frontend calls the Render API at `https://crazystudios-github-io.onrender.com`; configure `FRONTEND_URL` on Render as `https://peytonphillips890-wq.github.io/vyazxs.github.io/` so Discord sign-in returns to the Pages site. The API allows credentialed requests only from that configured frontend origin. Because Pages and Render are different sites, production session cookies use `SameSite=None; Secure`. Do not place server secrets in GitHub Pages settings that are exposed to client code.
 
 ## What's implemented
 

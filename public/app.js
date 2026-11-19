@@ -1,6 +1,8 @@
 const state = { data: null, games: [], products: [], announcements: [], staff: [], adminTab: 'games' };
 const logo = 'https://imglink.cc/cdn/w_9tyzCBOe.png';
 const githubPages = location.hostname.endsWith('.github.io');
+const apiBaseUrl = githubPages ? 'https://crazystudios-github-io.onrender.com' : location.origin;
+const apiUrl = path => new URL(path, apiBaseUrl).toString();
 const $ = selector => document.querySelector(selector);
 const $$ = selector => [...document.querySelectorAll(selector)];
 const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
@@ -8,8 +10,9 @@ const initials = value => String(value || 'CS').split(/[\s_-]+/).slice(0, 2).map
 const can = permission => Boolean(state.data?.user?.isCeo || state.data?.user?.permissions?.includes(permission));
 
 async function api(url, options = {}) {
-  const response = await fetch(url, {
+  const response = await fetch(apiUrl(url), {
     ...options,
+    credentials: 'include',
     headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
     body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body
   });
@@ -117,7 +120,7 @@ function navigate(page) {
 function showSignIn() {
   openModal(`<button class="modal-close" data-close aria-label="Close">×</button><div class="modal-brand"><img src="${logo}" alt=""></div>
     <div class="eyebrow">WELCOME TO THE STUDIO</div><h2 id="modal-title">Find your people.</h2><p class="modal-copy">Connect your Discord account and step into the Crazy Studios community.</p>
-    <a class="button button-primary full-button" href="/api/auth/discord">Continue with Discord <span>↗</span></a>
+    <a class="button button-primary full-button" href="${escapeHtml(apiUrl('/api/auth/discord'))}">Continue with Discord <span>↗</span></a>
     <button class="subtle-link" id="ceo-login-open">Studio admin sign in</button>`);
   $('#ceo-login-open').onclick = showCeoLogin;
 }
@@ -365,15 +368,6 @@ function wireRoleRemove() {
 }
 
 async function load() {
-  if (githubPages) {
-    state.data = {
-      user: null, games: [], products: [], announcements: [], staff: [],
-      site: { accent: '#a3ff3f', discordInvite: '', discordDescription: 'Join the conversation and meet the community.' },
-      roleOptions: []
-    };
-    render();
-    return;
-  }
   state.data = await api('/api/bootstrap');
   render();
 }
@@ -387,9 +381,7 @@ document.addEventListener('click', event => {
   if (go) navigate(go.dataset.go);
   if (event.target.closest('[data-close]') || event.target === $('#modal-backdrop')) closeModal();
 });
-$('#signin-button').onclick = () => githubPages
-  ? toast('Discord sign-in needs the Crazy Studios backend, which GitHub Pages cannot run.', true)
-  : showSignIn();
+$('#signin-button').onclick = showSignIn;
 $('#account-button').onclick = showAccount;
 $('#menu-button').onclick = () => $('#main-nav').classList.toggle('mobile-open');
 $('#game-search').addEventListener('input', event => {
