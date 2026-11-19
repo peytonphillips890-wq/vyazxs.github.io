@@ -23,6 +23,14 @@ for (const name of required) {
   if (!process.env[name]) throw new Error(`Missing required environment variable: ${name}`);
 }
 if (process.env.SESSION_SECRET.length < 32) throw new Error('SESSION_SECRET must contain at least 32 characters.');
+if (process.env.DISCORD_ALERT_WEBHOOK_URL) {
+  const alertWebhook = new URL(process.env.DISCORD_ALERT_WEBHOOK_URL);
+  if (alertWebhook.protocol !== 'https:'
+      || !['discord.com', 'discordapp.com'].includes(alertWebhook.hostname)
+      || !/^\/api\/webhooks\/\d+\/[^/]+$/.test(alertWebhook.pathname)) {
+    throw new Error('DISCORD_ALERT_WEBHOOK_URL must be a Discord HTTPS webhook URL.');
+  }
+}
 
 const db = new DatabaseSync(path.join(dataDirectory, 'crazy-studios.sqlite'));
 db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
@@ -347,7 +355,87 @@ function visibleNavigation(user) {
 function audit(user, action, target = '') {
   db.prepare('INSERT INTO audit_logs (id, actor_id, action, target_id) VALUES (?, ?, ?, ?)')
     .run(crypto.randomUUID(), user.id, action, String(target));
+  if (!process.env.DISCORD_ALERT_WEBHOOK_URL || action === 'page.image.uploaded') return;
+  const key = `${action}:${target}`;
+  const pending = pendingAuditAlerts.get(key);
+  if (pending) clearTimeout(pending.timer);
+  const alert = {
+    action: action.replaceAll('.', ' '),
+    target: String(target).slice(0, 100),
+    actor: String(user.display_name || user.username).slice(0, 80)
+  };
+  const timer = setTimeout(() => {
+    pendingAuditAlerts.delete(key);
+    postDiscordWebhook({
+      embeds: [{
+        title: 'Crazy Studios · site update',
+        description: `**${alert.actor}** · ${alert.action}${alert.target ? ` · \`${alert.target}\`` : ''}`,
+        color: 10747647,
+        timestamp: new Date().toISOString()
+      }],
+      allowed_mentions: { parse: [] }
+    });
+  }, 15000);
+  timer.unref();
+  pendingAuditAlerts.set(key, { timer });
 }
+
+const pendingAuditAlerts = new Map();
+
+async function postDiscordWebhook(payload) {
+  if (!process.env.DISCORD_ALERT_WEBHOOK_URL) return false;
+  try {
+    const response = await fetch(process.env.DISCORD_ALERT_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    if (!response.ok) throw new Error(`Discord webhook request failed (${response.status}).`);
+    return true;
+  } catch (error) {
+    console.error('Discord alert delivery failed:', error.message);
+    return false;
+  }
+}
+
+function saveSetting(key, value) {
+  db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .run(key, value);
+}
+
+async function sendDailyAnalyticsSummary() {
+  if (!process.env.DISCORD_ALERT_WEBHOOK_URL) return;
+  const day = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  if ((setting('analyticsSummaryDate') || '') >= day) return;
+  const rows = db.prepare(`SELECT page, event, count FROM visitor_analytics
+    WHERE day = ? ORDER BY page, event`).all(day);
+  if (!rows.length) {
+    saveSetting('analyticsSummaryDate', day);
+    return;
+  }
+  const views = rows.filter(row => row.event === 'view').reduce((total, row) => total + row.count, 0);
+  const departures = rows.filter(row => row.event === 'departure').reduce((total, row) => total + row.count, 0);
+  const fields = rows.map(row => ({
+    name: `${row.page} · ${row.event === 'view' ? 'page views' : 'departures'}`,
+    value: String(row.count),
+    inline: true
+  }));
+  const sent = await postDiscordWebhook({
+    embeds: [{
+      title: `Opt-in visitor summary · ${day}`,
+      description: `**${views}** page views · **${departures}** departures. These are aggregate counts; no visitor identities are recorded.`,
+      color: 10747647,
+      fields,
+      timestamp: new Date().toISOString()
+    }],
+    allowed_mentions: { parse: [] }
+  });
+  if (sent) saveSetting('analyticsSummaryDate', day);
+}
+
+const analyticsSummaryTimer = setInterval(() => { sendDailyAnalyticsSummary(); }, 15 * 60 * 1000);
+analyticsSummaryTimer.unref();
+sendDailyAnalyticsSummary();
 
 const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
 app.post('/api/auth/ceo', authLimiter, async (req, res) => {
@@ -493,6 +581,27 @@ app.post('/api/auth/logout', (req, res) => req.session.destroy(error => {
   res.clearCookie('crazy.sid');
   res.json({ ok: true });
 }));
+
+app.post('/api/analytics/events',
+  rateLimit({ windowMs: 60 * 1000, limit: 120, standardHeaders: true, legacyHeaders: false }),
+  express.text({ type: 'text/plain', limit: '1kb' }),
+  (req, res) => {
+  let eventBody = req.body;
+  if (typeof eventBody === 'string') {
+    try { eventBody = JSON.parse(eventBody); }
+    catch { return res.status(400).json({ error: 'Analytics event is invalid.' }); }
+  }
+  const parsed = z.object({
+    event: z.enum(['view', 'departure']),
+    page: z.enum(['home', 'games', 'shop', 'announcements', 'staff', 'discord', 'custom', 'other'])
+  }).strict().safeParse(eventBody);
+  if (!parsed.success) return res.status(400).json({ error: 'Analytics event is invalid.' });
+  const day = new Date().toISOString().slice(0, 10);
+  db.prepare(`INSERT INTO visitor_analytics (day, page, event, count) VALUES (?, ?, ?, 1)
+    ON CONFLICT(day, page, event) DO UPDATE SET count = count + 1`)
+    .run(day, parsed.data.page, parsed.data.event);
+  res.sendStatus(204);
+});
 
 app.get('/api/bootstrap', (req, res) => {
   const user = currentUser(req);

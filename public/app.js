@@ -8,6 +8,10 @@ const state = {
   adminTab: 'overview',
   adminSearch: ''
 };
+const analyticsConsentKey = 'crazy-studios-analytics-consent';
+let analyticsConsent = null;
+let departureSent = false;
+let lastTrackedRoute = null;
 const logo = 'https://imglink.cc/cdn/w_9tyzCBOe.png';
 const githubPages = location.hostname.endsWith('.github.io');
 const apiBaseUrl = githubPages ? 'https://crazystudios-github-io.onrender.com' : location.origin;
@@ -19,8 +23,19 @@ const initials = value => String(value || 'CS').split(/[\s_-]+/).slice(0, 2).map
 const can = permission => Boolean(state.data?.user?.isCeo || state.data?.user?.permissions?.includes(permission));
 
 async function api(url, options = {}) {
+  if (typeof url !== 'string' || !url.trim()) {
+    throw new Error('API endpoint is missing.');
+  }
+  const requestUrl = apiUrl(url);
+  const requestPath = new URL(requestUrl).pathname;
+  const pathSegments = requestPath.split('/').filter(Boolean);
+  if (pathSegments.includes('undefined')
+      || pathSegments.includes('null')
+      || (pathSegments[0] === 'api' && pathSegments[1] === 'admin' && !pathSegments[2])) {
+    throw new Error('API endpoint is incomplete.');
+  }
   const isFormData = options.body instanceof FormData;
-  const response = await fetch(apiUrl(url), {
+  const response = await fetch(requestUrl, {
     ...options,
     credentials: 'include',
     headers: { ...(options.body && !isFormData ? { 'Content-Type': 'application/json' } : {}), ...options.headers },
@@ -165,6 +180,7 @@ async function openCustomPage(slug) {
   $$('.page').forEach(page => page.classList.toggle('active', page === section));
   $('#main-nav').classList.remove('mobile-open');
   history.replaceState(null, '', `#custom/${encodeURIComponent(slug)}`);
+  trackPageView();
   section.innerHTML = '<div class="loading-state">Loading page…</div>';
   try {
     const { page } = await api(`/api/pages/${encodeURIComponent(slug)}`);
@@ -243,6 +259,7 @@ function navigate(page) {
   $$('.page').forEach(section => section.classList.toggle('active', section.id === `page-${target}`));
   $$('.nav-link').forEach(link => link.classList.toggle('active', link.dataset.page === target));
   history.replaceState(null, '', `#${target}`);
+  trackPageView();
   $('#main-nav').classList.remove('mobile-open');
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
@@ -406,8 +423,8 @@ async function renderAdminDashboard() {
   }
 }
 
-function editorForm(manager, item = {}) {
-  return `<form class="admin-form" data-collection-form="${state.adminTab}" data-id="${escapeHtml(item.id || '')}">
+function editorForm(collection, manager, item = {}) {
+  return `<form class="admin-form" data-collection-form="${escapeHtml(collection)}" data-id="${escapeHtml(item.id || '')}">
     ${manager.fields.map(([name, label, type]) => type === 'checkbox'
       ? `<label class="checkbox-label"><input type="checkbox" name="${name}" ${item[name] ? 'checked' : ''}> ${label}</label>`
       : `<label>${label}<${name === 'body' || name === 'description' ? 'textarea rows="3"' : 'input'} name="${name}" ${name === 'image_url' || name === 'play_url' || name === 'purchase_url' ? 'type="url"' : ''} value="${name === 'body' || name === 'description' ? '' : escapeHtml(item[name] || '')}" placeholder="${label}" ${name === 'body' || name === 'description' ? '>' + escapeHtml(item[name] || '') + '</textarea>' : '>'}</label>`).join('')}
@@ -425,10 +442,10 @@ function renderAdminCollection(collection) {
   const manager = managers[collection];
   if (!manager || !can(manager.permission)) return showAdmin();
   $('#admin-content').innerHTML = `<div class="admin-list">${adminRows(collection, manager)}</div><button id="new-item" class="button button-outline full-button">＋ Add ${manager.title.toLowerCase()} item</button><div id="admin-editor"></div>`;
-  $('#new-item').onclick = () => { $('#admin-editor').innerHTML = editorForm(manager); wireCollectionForm(); };
+  $('#new-item').onclick = () => { $('#admin-editor').innerHTML = editorForm(collection, manager); wireCollectionForm(); };
   $$('[data-edit]').forEach(button => button.onclick = () => {
     const item = (state.data[collection] || []).find(value => value.id === button.dataset.edit);
-    $('#admin-editor').innerHTML = editorForm(manager, item);
+    $('#admin-editor').innerHTML = editorForm(collection, manager, item);
     wireCollectionForm();
   });
   $$('[data-delete]').forEach(button => button.onclick = async () => {
@@ -443,13 +460,31 @@ function wireCollectionForm() {
   $('[data-collection-form]')?.addEventListener('submit', async event => {
     event.preventDefault();
     const form = event.currentTarget;
+    const collection = form.dataset.collectionForm;
+    if (!Object.hasOwn(managers, collection)) {
+      console.error('Admin collection form is not configured.', {
+        form: 'collection editor',
+        action: form.dataset.id ? 'update' : 'create',
+        collection
+      });
+      toast('This form is not linked to a valid collection.', true);
+      return;
+    }
     const payload = Object.fromEntries(new FormData(form));
     form.querySelectorAll('input[type="checkbox"]').forEach(input => payload[input.name] = input.checked);
+    const action = form.dataset.id ? 'update' : 'create';
+    const url = `/api/admin/${collection}${form.dataset.id ? `/${form.dataset.id}` : ''}`;
     try {
-      const url = `/api/admin/${form.dataset.collection}${form.dataset.id ? `/${form.dataset.id}` : ''}`;
       await api(url, { method: form.dataset.id ? 'PUT' : 'POST', body: payload });
-      await load(); showAdmin(form.dataset.collection); toast('Changes published.');
-    } catch (error) { toast(error.message, true); }
+      await load(); showAdmin(collection); toast('Changes published.');
+    } catch (error) {
+      console.error('Admin collection form request failed.', {
+        form: `collection:${collection}`,
+        action,
+        endpoint: url
+      }, error);
+      toast(error.message, true);
+    }
   });
 }
 
@@ -1013,6 +1048,58 @@ function wireRoleRemove() {
   $$('[data-remove-role]').forEach(button => button.onclick = () => button.closest('.role-option').remove());
 }
 
+function savedAnalyticsConsent() {
+  try {
+    const value = localStorage.getItem(analyticsConsentKey);
+    return value === 'yes' || value === 'no' ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+function currentAnalyticsPage() {
+  const route = location.hash.slice(1);
+  if (route.startsWith('custom/')) return 'custom';
+  return ['home', 'games', 'shop', 'announcements', 'staff', 'discord'].includes(route) ? route : 'other';
+}
+
+function sendAnalyticsEvent(event) {
+  if (analyticsConsent !== 'yes') return;
+  const body = JSON.stringify({ event, page: currentAnalyticsPage() });
+  if (event === 'departure' && navigator.sendBeacon) {
+    if (navigator.sendBeacon(apiUrl('/api/analytics/events'), body)) return;
+  }
+  fetch(apiUrl('/api/analytics/events'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+    keepalive: event === 'departure'
+  }).catch(error => console.error('Anonymous analytics event could not be sent:', error));
+}
+
+function trackPageView() {
+  const route = location.hash.slice(1) || 'home';
+  if (analyticsConsent !== 'yes' || route === lastTrackedRoute) return;
+  lastTrackedRoute = route;
+  sendAnalyticsEvent('view');
+}
+
+function showPrivacyNotice() {
+  $('#privacy-notice').classList.remove('hidden');
+}
+
+function saveAnalyticsChoice(choice) {
+  analyticsConsent = choice;
+  try {
+    localStorage.setItem(analyticsConsentKey, choice);
+  } catch (error) {
+    analyticsConsent = null;
+    console.error('Analytics preference could not be saved:', error);
+  }
+  $('#privacy-notice').classList.add('hidden');
+  if (analyticsConsent === 'yes') trackPageView();
+}
+
 async function load() {
   state.data = await api('/api/bootstrap');
   render();
@@ -1048,8 +1135,29 @@ $('#game-filters').addEventListener('click', event => {
   $('#game-search').dispatchEvent(new Event('input'));
 });
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeModal(); });
-window.addEventListener('hashchange', navigateFromHash);
+window.addEventListener('hashchange', () => {
+  navigateFromHash();
+  sendAnalyticsEvent('view');
+});
+window.addEventListener('pagehide', () => {
+  if (analyticsConsent === 'yes' && !departureSent) {
+    departureSent = true;
+    sendAnalyticsEvent('departure');
+  }
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted) {
+    departureSent = false;
+    lastTrackedRoute = null;
+    trackPageView();
+  }
+});
+$('#privacy-choices').addEventListener('click', showPrivacyNotice);
+$('#analytics-accept').addEventListener('click', () => saveAnalyticsChoice('yes'));
+$('#analytics-decline').addEventListener('click', () => saveAnalyticsChoice('no'));
 $('#year').textContent = new Date().getFullYear();
+analyticsConsent = savedAnalyticsConsent();
+if (analyticsConsent === null) showPrivacyNotice();
 const initialRoute = location.hash.slice(1) || 'home';
 if (initialRoute.startsWith('custom/')) {
   $('#page-custom').classList.add('active');

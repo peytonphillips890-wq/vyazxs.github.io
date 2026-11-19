@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
+const { DatabaseSync } = require('node:sqlite');
 const fs = require('node:fs');
 const net = require('node:net');
 const os = require('node:os');
@@ -65,6 +66,35 @@ test('shop and announcements start empty, and protected routes reject guests', a
   assert.deepEqual(bootstrap.products, []);
   assert.deepEqual(bootstrap.announcements, []);
   assert.equal(adminResponse.status, 401);
+});
+
+test('analytics accepts coarse events and retains only daily page-category totals', async () => {
+  const response = await fetch(`${baseUrl}/api/analytics/events`, {
+    method: 'POST',
+    headers: {
+      Origin: 'https://peytonphillips890-wq.github.io',
+      'Content-Type': 'text/plain'
+    },
+    body: JSON.stringify({ event: 'view', page: 'games' })
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), 'https://peytonphillips890-wq.github.io');
+
+  const invalid = await fetch(`${baseUrl}/api/analytics/events`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ event: 'view', page: 'https://example.com/private-path' })
+  });
+  assert.equal(invalid.status, 400);
+
+  const db = new DatabaseSync(path.join(dataDirectory, 'crazy-studios.sqlite'));
+  const totals = db.prepare('SELECT page, event, count FROM visitor_analytics WHERE page = ?').all('games');
+  const analyticsColumns = db.prepare('PRAGMA table_info(visitor_analytics)').all().map(column => column.name);
+  db.close();
+  assert.deepEqual(totals.map(({ page, event, count }) => ({ page, event, count })), [
+    { page: 'games', event: 'view', count: 1 }
+  ]);
+  assert.equal(analyticsColumns.some(name => ['user_id', 'visitor_id', 'ip_address'].includes(name)), false);
 });
 
 test('GitHub Pages origin can make credentialed API requests but other origins are rejected', async () => {

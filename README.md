@@ -32,6 +32,13 @@ The site is available at `http://localhost:3000`. SQLite data and sessions are c
 - To send welcome messages, the bot must be able to create a DM and send attachments. Sign-in remains successful if the DM fails; the site reports delivery status.
 - For self-service role assignment, the bot needs the Manage Roles permission and its highest role must be above each role you make available. In Studio Settings, configure the exact server role IDs members may request. The server only assigns configured roles and reports Discord API failures.
 - Keep OAuth secrets and the bot token out of frontend files and Git. Rotate them immediately if exposed.
+- To receive moderation/content change alerts and daily opt-in analytics summaries in a Discord channel, create a channel webhook and set `DISCORD_ALERT_WEBHOOK_URL` only in the Express host's environment. This is a channel webhook, not a visitor DM; never put it in GitHub Pages or frontend code.
+
+## Optional visitor analytics and alerts
+
+Visitors see an analytics notice and must explicitly allow or decline. Only after opt-in does the browser send broad page-category views and a departure event; SQLite retains daily aggregate counts only, without account IDs, visitor IDs, URLs, or IP addresses. A “Privacy choices” control in the footer lets visitors change their choice. Discord receives only daily aggregate visitor summaries, never per-visitor notifications or DMs.
+
+The same webhook receives debounced alerts for audited studio changes, including content edits/deletions and moderation actions. Alerts include the staff account name, action, and target record ID, but no visitor activity. Without `DISCORD_ALERT_WEBHOOK_URL`, analytics still works locally and no Discord alert is sent. Configure the webhook on the backend host (Render for the production API), not GitHub Pages.
 
 ## Deployment
 
